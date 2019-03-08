@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <title>RFKD33 Classroom</title>
+</head>
+
+<body onload="main()">
+<div style="position:relative;z-index: 2;width: 800px; height: 600px">
+<canvas id="webgl" width="800" height="600" style="position:absolute;z-index: 0">
+    Please use a browser that supports "canvas"
+</canvas>
+<canvas id="hud" width="800" height="600" style="position:absolute;z-index: 1">
+
+</canvas>
+</div>
+<div style="position:relative;z-index: 2; width: 800px">
+    <h3>Welcome to CM107</h3>
+    <p> Have a move around. The HUD will tell you if you're within the interactive region of a chair.
+        (Face it somewhat directly from approximately 1 meter away).
+        The door will open automatically as you try to walk through it.
+        The camera is initially locked inside the room, this can be enabled and disabled using the <b>c</b> key.
+        Textures are used by default, it may take a short time for them to load.
+        The remaining instructions are displayed in an overlay.
+        Be sure to use the blinds and move the sun - the shadows produced by the sun are dynamics.
+    </p>
+</div>
+<script src="../lib/webgl-utils.js"></script>
+<script src="../lib/webgl-debug.js"></script>
+<script src="../lib/cuon-utils.js"></script>
+<script src="../lib/cuon-matrix.js"></script>
+
+<script type="text/x-shader" id="vertex">
+#ifdef GL_ES
+precision mediump float;
+#endif
+
+attribute vec4 a_Color;
+attribute vec4 a_Normal;  // Normal
+attribute vec4 a_Position;
+attribute vec2 a_TexCoords;
+
+uniform mat4 u_NormalMatrix;
+uniform mat4 u_ModelMatrix;
+uniform mat4 u_ViewMatrix;
+uniform mat4 u_ProjMatrix;
+
+varying vec4 v_Color;
+varying vec3 v_Normal;
+varying vec3 v_Position;
+varying vec2 v_TexCoords;
+
+void main() {
+    gl_Position = u_ProjMatrix * u_ViewMatrix * u_ModelMatrix * a_Position;
+    v_Color = a_Color;
+    v_Normal = normalize(vec3(u_NormalMatrix * a_Normal));
+    // world position coordinates
+    v_Position = vec3(u_ModelMatrix * a_Position);
+    v_TexCoords = a_TexCoords;
+
+}
+</script>
+
+<script type="text/x-shader" id="fragment">
+#ifdef GL_ES
+precision mediump float;
+#endif
+
+uniform bool u_UseTextures;
+uniform vec3 u_LightColor[4]; // one for each light source, last is sun
+uniform vec3 u_LightPosition[5]; // one for each light, penultimate is sun, last is blind positions.
+uniform vec3 u_AmbientLight; // ambient light colour
+uniform sampler2D u_Sampler;
+
+varying vec4 v_Color;
+varying vec3 v_Normal;
+varying vec3 v_Position;
+varying vec2 v_TexCoords;
+
+void main() {
+    // renormalise vertex normal because its interpolated
+    vec3 normal = normalize(v_Normal);
+
+    // pick if rgb or texture
+    vec4 col;
+    if (u_UseTextures) {
+        col = texture2D(u_Sampler, v_TexCoords);
+    } else {
+        col = v_Color;
+    }
+
+    // initalise with ambient light
+    vec3 finalColor = u_AmbientLight * col.rgb;
+
+    // stores for determining diffuse light with attenuation for each light source
+    vec3 diffuse;
+    float attenuation;
+
+    for (int i=0; i<3; i++){
+        vec3 lightDirection = normalize(u_LightPosition[i] - v_Position);
+
+        // angle of light
+        float diffuseCoefficient = max(dot(normal, lightDirection), 0.0);
+
+        diffuse = u_LightColor[i] * col.rgb * diffuseCoefficient;
+
+        // determine attenuation coefficient - k = 0.35
+        float distanceToLight = length(u_LightPosition[i] - v_Position);
+        attenuation = 1.0 / (1.0 + 0.35 * pow(distanceToLight, 2.0));
+
+        // update final color with this light source's contribution
+        finalColor += attenuation*diffuse;
+
+    }
+
+    // Ray trace from the sun. Windows top = 2.1, bottom = 0.9
+    float deltax = v_Position.x - u_LightPosition[3].x;
+    float deltay = v_Position.y - u_LightPosition[3].y;
+
+    // If in sun LoS for a positions given z coordinate (blind bottoms passed in, window bottom 0.9
+    bool in_sight = ( ( (v_Position.z > 0.3 && v_Position.z < 2.7) && (u_LightPosition[4].x-u_LightPosition[3].y)/(-u_LightPosition[3].x) > deltay/deltax) || // Visible through back window
+                      ( (v_Position.z > 3.0 && v_Position.z < 5.4) && (u_LightPosition[4].y-u_LightPosition[3].y)/(-u_LightPosition[3].x) > deltay/deltax) || // Visible through middle window
+                      ( (v_Position.z > 5.7 && v_Position.z < 8.1) && (u_LightPosition[4].z-u_LightPosition[3].y)/(-u_LightPosition[3].x) > deltay/deltax)  ) && // Visible through front window
+                      ( (0.9-u_LightPosition[3].y)/(-u_LightPosition[3].x) < deltay/deltax ) ; // Not hidden by bottom wall
+
+    // If position not hidden from line of sight of sun, add sunlight
+    attenuation = 0.0;
+    if (in_sight || v_Position.x < 0.0){
+        // determine attenuation of sunlight - k = 0.05
+        float distanceToLight = length(u_LightPosition[3] - v_Position);
+        attenuation = 1.0 / (1.0 + 0.05 * pow(distanceToLight, 2.0));
+    }
+
+    // Calculate final color from ambient, attenuated diffuse, sun and shadows (via ray trace)
+    finalColor += u_LightColor[3] * col.rgb * attenuation;
+    gl_FragColor = vec4(finalColor, col.a);
+}
+</script>
+
+<script src="./classroom.js"></script>
+
+</body>
+</html>
